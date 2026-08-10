@@ -344,6 +344,16 @@ function NightGame({ round, players, onComplete, setScreen }) {
 
   const getPlayer = (id) => workingPlayers.find((p) => p.id === id);
 
+  // Une personne ne peut pas "se réveiller" (agir) si elle est paralysée,
+  // ou si elle a été mutée cette nuit et n'a pas encore été soignée.
+  const isIncapacitated = (id) => id === paralyzeId || (id === mutateId && !healedIds.has(id));
+  const incapacityLabel = (id) => {
+    if (id === paralyzeId && id === mutateId && !healedIds.has(id)) return "paralysée et mutée cette nuit";
+    if (id === paralyzeId) return "paralysée";
+    if (id === mutateId && !healedIds.has(id)) return "mutée cette nuit et n'a pas été soignée à temps";
+    return null;
+  };
+
   const goNext = () => {
     if (stepIndex >= steps.length - 1) {
       onComplete(workingPlayers);
@@ -402,9 +412,10 @@ function NightGame({ round, players, onComplete, setScreen }) {
 
     if (currentKey === "Médecin") {
       const actorsAll = phase.actors;
-      const activeMedecins = actorsAll.filter((a) => a.id !== paralyzeId);
+      const activeMedecins = actorsAll.filter((a) => !isIncapacitated(a.id));
       if (activeMedecins.length === 0) {
-        content = <PhaseText title="Les médecins se réveillent..." sub="Le médecin est paralysé, donc il n'a pas accès à son action." paralyzed />;
+        const reason = actorsAll.map((a) => incapacityLabel(a.id)).find(Boolean) || "indisponible";
+        content = <PhaseText title="Les médecins se réveillent..." sub={`Le médecin est ${reason}, donc il n'a pas accès à son action.`} paralyzed />;
       } else {
         const healCap = activeMedecins.length;
         const healable = workingPlayers.filter((p) => p.alive && p.status === "mutant" && p.role !== "Mutant souche");
@@ -412,7 +423,7 @@ function NightGame({ round, players, onComplete, setScreen }) {
           <>
             <PhaseText
               title="Les médecins se réveillent..."
-              sub={actorsAll.length > activeMedecins.length ? "Un médecin est paralysé et ne participe pas cette nuit." : `Ils désignent, ensemble, jusqu'à ${healCap} personne(s) à soigner (y compris une personne mutée cette nuit).`}
+              sub={actorsAll.length > activeMedecins.length ? "Un médecin est indisponible (paralysé ou muté) et ne participe pas cette nuit." : `Ils désignent, ensemble, jusqu'à ${healCap} personne(s) à soigner (y compris une personne mutée cette nuit).`}
             />
             <SelectorBlock icon={Heart} color="#5ee0c8" label={`Personnes soignées (${healedIds.size}/${healCap})`}>
               {healable.length === 0 && <p style={{ fontSize: 12, color: "#7f9a8c" }}>Aucune personne mutante à soigner pour l'instant.</p>}
@@ -440,8 +451,8 @@ function NightGame({ round, players, onComplete, setScreen }) {
 
     if (currentKey === "Informaticien") {
       const actor = phase.actors[0];
-      if (actor.id === paralyzeId) {
-        content = <PhaseText title="L'informaticien se réveille..." sub="L'informaticien est paralysé, donc il n'a pas accès à son information." paralyzed />;
+      if (isIncapacitated(actor.id)) {
+        content = <PhaseText title="L'informaticien se réveille..." sub={`L'informaticien est ${incapacityLabel(actor.id)}, donc il n'a pas accès à son information.`} paralyzed />;
       } else {
         const count = workingPlayers.filter((p) => p.alive && p.status === "mutant").length;
         content = <PhaseText title="L'informaticien se réveille..." sub={`Il y a ${count} mutant${count > 1 ? "s" : ""} à bord du vaisseau.`} highlight />;
@@ -450,8 +461,8 @@ function NightGame({ round, players, onComplete, setScreen }) {
 
     if (currentKey === "Psychologue") {
       const actor = phase.actors[0];
-      if (actor.id === paralyzeId) {
-        content = <PhaseText title="Le psychologue se réveille..." sub="Le psychologue est paralysé, donc il n'a pas accès à son information." paralyzed />;
+      if (isIncapacitated(actor.id)) {
+        content = <PhaseText title="Le psychologue se réveille..." sub={`Le psychologue est ${incapacityLabel(actor.id)}, donc il n'a pas accès à son information.`} paralyzed />;
       } else {
         const candidates = workingPlayers.filter((p) => p.alive && p.id !== actor.id);
         const target = psychoTargetId !== null ? getPlayer(psychoTargetId) : null;
@@ -473,8 +484,8 @@ function NightGame({ round, players, onComplete, setScreen }) {
 
     if (currentKey === "Espion") {
       const actor = phase.actors[0];
-      if (actor.id === paralyzeId) {
-        content = <PhaseText title="L'espion se réveille..." sub="L'espion est paralysé, donc il n'a pas accès à son information." paralyzed />;
+      if (isIncapacitated(actor.id)) {
+        content = <PhaseText title="L'espion se réveille..." sub={`L'espion est ${incapacityLabel(actor.id)}, donc il n'a pas accès à son information.`} paralyzed />;
       } else {
         const candidates = workingPlayers.filter((p) => p.alive && p.id !== actor.id);
         const target = espionTargetId !== null ? getPlayer(espionTargetId) : null;
@@ -499,8 +510,8 @@ function NightGame({ round, players, onComplete, setScreen }) {
 
     if (currentKey === "Hacker") {
       const actor = phase.actors[0];
-      if (actor.id === paralyzeId) {
-        content = <PhaseText title="Le hacker se réveille..." sub="Le hacker est paralysé, donc il n'a pas accès à son information." paralyzed />;
+      if (isIncapacitated(actor.id)) {
+        content = <PhaseText title="Le hacker se réveille..." sub={`Le hacker est ${incapacityLabel(actor.id)}, donc il n'a pas accès à son information.`} paralyzed />;
       } else {
         const eligibleRoles = ["Informaticien", "Psychologue", "Espion"].filter((r) => phases.some((ph) => ph.role === r));
         if (eligibleRoles.length === 0) {
@@ -509,8 +520,8 @@ function NightGame({ round, players, onComplete, setScreen }) {
           let hackResult = null;
           if (hackedRole) {
             const hackedActor = phases.find((ph) => ph.role === hackedRole)?.actors[0];
-            if (hackedActor && hackedActor.id === paralyzeId) {
-              hackResult = "Cette personne était paralysée, elle n'a pas d'information à voler.";
+            if (hackedActor && isIncapacitated(hackedActor.id)) {
+              hackResult = `Cette personne était ${incapacityLabel(hackedActor.id)}, elle n'a pas d'information à voler.`;
             } else if (hackedRole === "Informaticien") {
               const count = workingPlayers.filter((p) => p.alive && p.status === "mutant").length;
               hackResult = `Il y a ${count} mutant${count > 1 ? "s" : ""} à bord du vaisseau.`;
@@ -680,7 +691,8 @@ function DayVote({ round, players, onConfirm, setScreen }) {
           ) : (
             <ResultBox color="#ff4d5e">
               {eliminatedPlayer?.name} est désigné(e) par l'équipage.{"\n"}
-              Rôle : {eliminatedPlayer?.role}
+              Rôle : {eliminatedPlayer?.role}{"\n"}
+              Statut : {eliminatedPlayer?.status === "mutant" ? "MUTANT" : "SAIN"}
             </ResultBox>
           )}
           <div style={{ display: "flex", justifyContent: "center", marginTop: 10 }}>
