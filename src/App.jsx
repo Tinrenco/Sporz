@@ -516,7 +516,7 @@ function NightGame({ round, players, onComplete, setScreen }) {
               hackResult = `Il y a ${count} mutant${count > 1 ? "s" : ""} à bord du vaisseau.`;
             } else if (hackedRole === "Psychologue") {
               const target = psychoTargetId !== null ? getPlayer(psychoTargetId) : null;
-              hackResult = target ? `Cette personne est ${target.status === "mutant" ? "MUTANTE" : "SAINE"}.` : "Le psychologue n'a analysé personne cette nuit.";
+              hackResult = target ? `${target.name} est ${target.status === "mutant" ? "MUTANTE" : "SAINE"}.` : "Le psychologue n'a analysé personne cette nuit.";
             } else if (hackedRole === "Espion") {
               const target = espionTargetId !== null ? getPlayer(espionTargetId) : null;
               hackResult = target
