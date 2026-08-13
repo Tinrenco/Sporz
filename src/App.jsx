@@ -1,8 +1,9 @@
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useEffect } from "react";
 import {
   Skull, Stethoscope, Brain, Cpu, Terminal, Eye, User,
   VenetianMask, Rocket, BookOpen, ChevronLeft, Minus, Plus,
   Users, Syringe, Heart, X, Check, Trophy, Ban,
+  Clock, Pause, Play, Crown, Shuffle,
 } from "lucide-react";
 
 /* ---------------------------------------------------------
@@ -19,8 +20,8 @@ const ROLES_BASE = [
 ];
 
 const ROLE_INFO = {
-  "Mutant souche": { icon: Skull, color: "#ff4d5e", glow: "rgba(255,77,94,0.45)", desc: "Premier mutant. Désigne chaque nuit une personne à paralyser et une à muter." },
-  "Médecin": { icon: Stethoscope, color: "#5ee0c8", glow: "rgba(94,224,200,0.45)", desc: "Soigne une personne chaque nuit (ou peut tuer)." },
+  "Mutant souche": { icon: Skull, color: "#ff4d5e", glow: "rgba(255,77,94,0.45)", desc: "Premier mutant. Désigne chaque nuit, avec les autres mutants, une personne à muter et une à paralyser. Si la souche meurt, les autres mutants continuent d'agir." },
+  "Médecin": { icon: Stethoscope, color: "#5ee0c8", glow: "rgba(94,224,200,0.45)", desc: "Soigne une personne chaque nuit (ou peut tuer). Les deux médecins se reconnaissent avant la première nuit." },
   "Psychologue": { icon: Brain, color: "#b389ff", glow: "rgba(179,137,255,0.45)", desc: "Connaît l'état d'une personne : mutante ou saine." },
   "Informaticien": { icon: Cpu, color: "#5ea9ff", glow: "rgba(94,169,255,0.45)", desc: "Connaît le nombre de mutants à bord." },
   "Hacker": { icon: Terminal, color: "#8dff6b", glow: "rgba(141,255,107,0.45)", desc: "Peut voler l'information d'un autre rôle." },
@@ -29,20 +30,23 @@ const ROLE_INFO = {
   "Astronaute": { icon: User, color: "#e8e8e8", glow: "rgba(232,232,232,0.35)", desc: "Aucune capacité particulière. Reste vigilant." },
 };
 
-const ROLE_TURN_ORDER = ["Mutant souche", "Médecin", "Informaticien", "Psychologue", "Espion", "Hacker"];
+// Ordre des rôles à réveil individuel (le réveil des mutants est géré séparément, en premier)
+const ROLE_TURN_ORDER_REST = ["Médecin", "Informaticien", "Psychologue", "Espion", "Hacker"];
 
 const RULES_SECTIONS = [
   { title: "But du jeu", body: "Sporz Original Outbreak est un jeu de société dans lequel chaque joueur incarne un astronaute, sain ou muté par une spore qui s'empare de l'esprit de son hôte.\n\nPour les astronautes sains : tuer ou guérir tous les mutés.\nPour les astronautes mutés : muter ou tuer tous les astronautes sains." },
   { title: "Les rôles", roles: true },
-  { title: "Déroulement", body: "La partie est menée par une personne ne prenant pas part au jeu (ou par l'application). Un rôle est distribué à chaque joueur, au hasard ou à son idée ; chacun découvre secrètement son identité.\n\nDeux camps s'affrontent : les mutants et les astronautes sains. Chaque camp veut être l'unique camp à bord du vaisseau.\n\nLes tours sont rythmés par une période de jour et une de nuit. Durant la nuit, tous les joueurs ferment les yeux. Chaque rôle est appelé tour à tour par le meneur et effectue son action. Au matin, tout le monde se réveille." },
-  { title: "Le jour", body: "Prévenus de la présence d'une spore, les non-mutants tentent de détecter qui est muté, sans se trahir. Les mutants tentent de se faire passer pour des gens sains. Pour éviter une propagation trop rapide, les joueurs ne peuvent pas se regrouper à plus de 4.\n\nÀ la fin du débat, chaque joueur vote en secret, avec possibilité de voter blanc. En cas de majorité de blancs, rien ne se passe. Sinon, la personne désignée est déclarée hors-jeu : son rôle et son état sont révélés." },
+  { title: "Déroulement", body: "La partie est menée par une personne ne prenant pas part au jeu (ou par l'application). Un rôle est distribué à chaque joueur, au hasard ou à son idée ; chacun découvre secrètement son identité.\n\nAvant la première nuit, les deux médecins se réveillent ensemble et se reconnaissent secrètement.\n\nDeux camps s'affrontent : les mutants et les astronautes sains. Chaque camp veut être l'unique camp à bord du vaisseau.\n\nLes tours sont rythmés par une période de jour et une de nuit. Durant la nuit, tous les joueurs ferment les yeux. Chaque rôle est appelé tour à tour par le meneur et effectue son action. Au matin, tout le monde se réveille." },
+  { title: "Le jour", body: "Prévenus de la présence d'une spore, les non-mutants tentent de détecter qui est muté, sans se trahir. Les mutants tentent de se faire passer pour des gens sains. Pour éviter une propagation trop rapide, les joueurs ne peuvent pas se regrouper à plus de 4.\n\nLa discussion est chronométrée (durée réglable en début de partie). Lors du tout premier vote, l'équipage élit aussi un capitaine.\n\nÀ la fin du débat, chaque joueur vote en secret, avec possibilité de voter blanc. En cas de majorité de blancs, rien ne se passe. En cas d'égalité entre plusieurs joueurs, c'est le capitaine qui décide qui est éliminé. Sinon, la personne désignée est déclarée hors-jeu : son rôle et son état sont révélés." },
   { title: "L'essentiel", body: "Toute la subtilité du jeu réside dans l'observation, les tractations sociales entre joueurs, et le partage d'informations — certains rôles détenant des indices décisifs, ou pouvant semer le doute s'ils sont mutants." },
 ];
 
-function generateRoles(n) {
+function generateRoles(n, opts = {}) {
   let roles = [...ROLES_BASE];
-  if (n > roles.length) roles.push("Espion");
-  if (n > roles.length) roles.push("Traître");
+  const extra = Math.max(0, n - roles.length);
+  let used = 0;
+  if (opts.traitre && used < extra) { roles.push("Traître"); used++; }
+  if (opts.espion && used < extra) { roles.push("Espion"); used++; }
   while (roles.length < n) roles.push("Astronaute");
   return roles.sort(() => Math.random() - 0.5);
 }
@@ -55,6 +59,12 @@ function checkWinner(players) {
   if (mutants.length === 0) return "sains";
   if (sains.length === 0) return "mutants";
   return null;
+}
+
+function formatTime(totalSeconds) {
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
 /* ---------------------------------------------------------
@@ -118,8 +128,12 @@ function SectionTitle({ icon: Icon, color, title, sub }) {
   );
 }
 
+function CaptainBadge() {
+  return <Crown size={12} color="#ffb454" style={{ marginLeft: 6, verticalAlign: "middle" }} />;
+}
+
 /* PlayersToggle : bouton "JOUEURS" (peut être désactivé, ex. pendant la phase de vote) */
-function PlayersToggle({ players, disabled }) {
+function PlayersToggle({ players, disabled, captainId }) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -156,7 +170,9 @@ function PlayersToggle({ players, disabled }) {
                 <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 8px", borderBottom: "1px solid rgba(255,255,255,0.06)", opacity: p.alive ? 1 : 0.45 }}>
                   <Icon size={18} color={info.color} style={{ flexShrink: 0 }} />
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: "#e8ecef", textDecoration: p.alive ? "none" : "line-through" }}>{p.name}</div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: "#e8ecef", textDecoration: p.alive ? "none" : "line-through" }}>
+                      {p.name}{captainId === p.id && <CaptainBadge />}
+                    </div>
                     <div style={{ fontSize: 12, color: info.color }}>{p.role}</div>
                   </div>
                   <span style={{ fontSize: 10, letterSpacing: 0.5, padding: "3px 8px", borderRadius: 999, color: p.status === "mutant" ? "#ff8f9a" : "#9fe8c8", border: `1px solid ${p.status === "mutant" ? "#ff4d5e" : "#4fd67a"}` }}>
@@ -203,17 +219,56 @@ function Menu({ setScreen }) {
    ECRAN : SELECTION JOUEURS
 --------------------------------------------------------- */
 
-function PlayerSelect({ numPlayers, setNumPlayers, onValidate, setScreen }) {
+function PlayerSelect({
+  numPlayers, setNumPlayers,
+  includeTraitre, setIncludeTraitre,
+  includeEspion, setIncludeEspion,
+  discussionMinutes, setDiscussionMinutes,
+  onValidate, setScreen,
+}) {
   const [error, setError] = useState("");
+  const extraSlots = Math.max(0, numPlayers - 6);
+  const specialCount = (includeTraitre ? 1 : 0) + (includeEspion ? 1 : 0);
+
   return (
     <Backdrop>
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 24 }}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 22, paddingTop: 30, paddingBottom: 30, overflowY: "auto" }}>
         <p style={{ color: "#9fb3ac", letterSpacing: 1, fontSize: 15 }}>NOMBRE DE JOUEURS (6 MINIMUM)</p>
-        <div style={{ fontSize: 72, fontWeight: 900, color: "#8dff6b", textShadow: "0 0 30px rgba(141,255,107,0.4)", minWidth: 120, textAlign: "center" }}>{numPlayers}</div>
+        <div style={{ fontSize: 64, fontWeight: 900, color: "#8dff6b", textShadow: "0 0 30px rgba(141,255,107,0.4)", minWidth: 120, textAlign: "center" }}>{numPlayers}</div>
         <div style={{ display: "flex", gap: 20 }}>
           <button onClick={() => setNumPlayers((n) => Math.max(6, n - 1))} style={roundBtnStyle}><Minus size={22} /></button>
           <button onClick={() => setNumPlayers((n) => Math.min(20, n + 1))} style={roundBtnStyle}><Plus size={22} /></button>
         </div>
+
+        {extraSlots > 0 && (
+          <div style={{ width: "100%" }}>
+            <SectionTitle icon={VenetianMask} color="#ffb454" title="Rôles additionnels" sub={`${extraSlots} place(s) en plus des 6 rôles de base. Les places non attribuées deviennent des Astronautes.`} />
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, paddingLeft: 2 }}>
+              <Chip
+                label="Traître" sub="Sain, camp des mutants" color="#ffb454"
+                selected={includeTraitre}
+                disabled={!includeTraitre && specialCount >= extraSlots}
+                onClick={() => setIncludeTraitre((v) => !v)}
+              />
+              <Chip
+                label="Espion" sub="Infos sur la nuit" color="#c9c9c9"
+                selected={includeEspion}
+                disabled={!includeEspion && specialCount >= extraSlots}
+                onClick={() => setIncludeEspion((v) => !v)}
+              />
+            </div>
+          </div>
+        )}
+
+        <div style={{ width: "100%" }}>
+          <SectionTitle icon={Clock} color="#5ea9ff" title="Chrono de discussion" sub="Durée du débat avant chaque vote." />
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 16 }}>
+            <button onClick={() => setDiscussionMinutes((m) => Math.max(1, m - 1))} style={{ ...roundBtnStyle, width: 40, height: 40 }}><Minus size={16} /></button>
+            <div style={{ fontSize: 26, fontWeight: 900, color: "#5ea9ff", minWidth: 70, textAlign: "center" }}>{discussionMinutes} min</div>
+            <button onClick={() => setDiscussionMinutes((m) => Math.min(30, m + 1))} style={{ ...roundBtnStyle, width: 40, height: 40 }}><Plus size={16} /></button>
+          </div>
+        </div>
+
         {error && <p style={{ color: "#ff4d5e", fontSize: 13 }}>{error}</p>}
         <PrimaryButton onClick={() => { if (numPlayers < 6) { setError("Il faut au moins 6 joueurs !"); return; } onValidate(numPlayers); }}>VALIDER</PrimaryButton>
       </div>
@@ -317,10 +372,36 @@ function RolePhase({ roles, onFinish, setScreen }) {
 }
 
 /* ---------------------------------------------------------
+   ECRAN : RECONNAISSANCE DES MÉDECINS (avant la 1ère nuit)
+--------------------------------------------------------- */
+
+function MedecinReco({ players, onContinue, setScreen }) {
+  const medecins = players.filter((p) => p.role === "Médecin");
+  return (
+    <Backdrop>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 24, textAlign: "center" }}>
+        <Stethoscope size={44} color="#5ee0c8" style={{ filter: "drop-shadow(0 0 14px rgba(94,224,200,0.5))" }} />
+        {medecins.length === 2 ? (
+          <PhaseText
+            title="Avant la première nuit, les deux médecins se réveillent..."
+            sub={`${medecins[0].name} et ${medecins[1].name}, ouvrez les yeux et regardez-vous.\nVous connaissez désormais l'identité l'un de l'autre.`}
+            highlight
+          />
+        ) : (
+          <PhaseText title="Il n'y a qu'un seul médecin en jeu." sub="Rien à faire pour cette étape." />
+        )}
+        <PrimaryButton onClick={onContinue}>LES MÉDECINS SE RENDORMENT</PrimaryButton>
+      </div>
+      <BackButton onClick={() => setScreen("menu")} />
+    </Backdrop>
+  );
+}
+
+/* ---------------------------------------------------------
    ECRAN : NUIT INTERACTIVE
 --------------------------------------------------------- */
 
-function NightGame({ round, players, onComplete, setScreen }) {
+function NightGame({ round, players, captainId, onComplete, onAutoEnd, setScreen }) {
   // copie de travail des joueurs, mise à jour en direct pendant la nuit
   const [workingPlayers, setWorkingPlayers] = useState(() => players.map((p) => ({ ...p })));
   const [stepIndex, setStepIndex] = useState(0);
@@ -332,11 +413,15 @@ function NightGame({ round, players, onComplete, setScreen }) {
   const [espionTargetId, setEspionTargetId] = useState(null);
   const [hackedRole, setHackedRole] = useState(null);
 
-  // phases actives cette nuit : uniquement les rôles dont au moins un joueur est vivant
+  // phases actives cette nuit : le réveil des mutants (souche + mutants convertis, tant qu'il en reste
+  // un en vie, même si la souche est morte), puis les rôles à réveil individuel encore vivants.
   const phases = useMemo(() => {
-    return ROLE_TURN_ORDER
+    const aliveMutants = players.filter((p) => p.alive && p.status === "mutant");
+    const mutantPhase = aliveMutants.length > 0 ? { role: "Mutants", actors: aliveMutants } : null;
+    const rolePhases = ROLE_TURN_ORDER_REST
       .map((role) => ({ role, actors: players.filter((p) => p.role === role && p.alive) }))
       .filter((ph) => ph.actors.length > 0);
+    return mutantPhase ? [mutantPhase, ...rolePhases] : rolePhases;
   }, [players]);
 
   const steps = useMemo(() => ["intro", ...phases.map((ph) => ph.role), "outro"], [phases]);
@@ -363,9 +448,25 @@ function NightGame({ round, players, onComplete, setScreen }) {
   };
 
   const confirmMutantPhase = () => {
+    let updated = workingPlayers;
     if (mutateId !== null) {
-      setWorkingPlayers((prev) => prev.map((p) => (p.id === mutateId ? { ...p, status: "mutant" } : p)));
+      updated = workingPlayers.map((p) => (p.id === mutateId ? { ...p, status: "mutant" } : p));
+      setWorkingPlayers(updated);
     }
+
+    // Fin de partie automatique : si les deux médecins sont hors service (mutés, ou l'un muté
+    // et l'autre paralysé cette nuit), plus personne ne peut soigner — la partie s'arrête.
+    const medecins = updated.filter((p) => p.role === "Médecin");
+    const bothAlive = medecins.length === 2 && medecins.every((p) => p.alive);
+    if (bothAlive) {
+      const mutantCount = medecins.filter((p) => p.status === "mutant").length;
+      const oneMutantOneParalyzed = mutantCount === 1 && medecins.some((p) => p.status === "sain" && p.id === paralyzeId);
+      if (mutantCount === 2 || oneMutantOneParalyzed) {
+        onAutoEnd(updated);
+        return;
+      }
+    }
+
     goNext();
   };
 
@@ -391,13 +492,16 @@ function NightGame({ round, players, onComplete, setScreen }) {
   } else {
     const phase = phases.find((ph) => ph.role === currentKey);
 
-    if (currentKey === "Mutant souche") {
-      const actor = phase.actors[0];
+    if (currentKey === "Mutants") {
       const sains = workingPlayers.filter((p) => p.alive && p.status === "sain");
-      const paralyzables = workingPlayers.filter((p) => p.alive && p.id !== actor.id);
+      const paralyzables = workingPlayers.filter((p) => p.alive && p.status !== "mutant");
+      const title = round === 1 ? "Le mutant souche se réveille..." : "Les mutants se réveillent...";
+      const sub = round === 1
+        ? "Il désigne une personne à muter et une personne à paralyser."
+        : "Ils désignent, ensemble, une personne à muter et une personne à paralyser.";
       content = (
         <>
-          <PhaseText title="Le mutant souche se réveille..." sub="Il désigne une personne à muter et une personne à paralyser." />
+          <PhaseText title={title} sub={sub} />
           <SelectorBlock icon={Syringe} color="#ff4d5e" label="Personne à muter">
             <Chip label="Personne" color="#ff4d5e" selected={mutateId === null} onClick={() => setMutateId(null)} />
             {sains.map((p) => <Chip key={p.id} label={p.name} sub={p.role} color="#ff4d5e" selected={mutateId === p.id} onClick={() => setMutateId(p.id)} />)}
@@ -513,35 +617,64 @@ function NightGame({ round, players, onComplete, setScreen }) {
       if (isIncapacitated(actor.id)) {
         content = <PhaseText title="Le hacker se réveille..." sub={`Le hacker est ${incapacityLabel(actor.id)}, donc il n'a pas accès à son information.`} paralyzed />;
       } else {
-        const eligibleRoles = ["Informaticien", "Psychologue", "Espion"].filter((r) => phases.some((ph) => ph.role === r));
-        if (eligibleRoles.length === 0) {
+        const informaticienActor = phases.find((ph) => ph.role === "Informaticien")?.actors[0];
+        const psychoActor = phases.find((ph) => ph.role === "Psychologue")?.actors[0];
+        const espionActor = phases.find((ph) => ph.role === "Espion")?.actors[0];
+        const infoParalyzed = informaticienActor ? isIncapacitated(informaticienActor.id) : false;
+        const psychoParalyzed = psychoActor ? isIncapacitated(psychoActor.id) : false;
+        const espionParalyzed = espionActor ? isIncapacitated(espionActor.id) : false;
+
+        let eligibleRoles = ["Informaticien", "Psychologue", "Espion"].filter((r) => phases.some((ph) => ph.role === r));
+        if (espionParalyzed) eligibleRoles = eligibleRoles.filter((r) => r !== "Espion");
+
+        // Si l'informaticien ou le psychologue est paralysé, le hacker ne peut pas piocher son info :
+        // il obtient à la place, automatiquement, l'information de l'autre rôle de la paire.
+        let autoInfo = null;
+        if (infoParalyzed) {
+          eligibleRoles = eligibleRoles.filter((r) => r !== "Informaticien");
+          if (psychoActor && !psychoParalyzed) {
+            eligibleRoles = eligibleRoles.filter((r) => r !== "Psychologue");
+            const target = psychoTargetId !== null ? getPlayer(psychoTargetId) : null;
+            autoInfo = target ? `${target.name} est ${target.status === "mutant" ? "MUTANTE" : "SAINE"}.` : "Le psychologue n'a analysé personne cette nuit.";
+          }
+        }
+        if (psychoParalyzed) {
+          eligibleRoles = eligibleRoles.filter((r) => r !== "Psychologue");
+          if (informaticienActor && !infoParalyzed) {
+            eligibleRoles = eligibleRoles.filter((r) => r !== "Informaticien");
+            const count = workingPlayers.filter((p) => p.alive && p.status === "mutant").length;
+            autoInfo = `Il y a ${count} mutant${count > 1 ? "s" : ""} à bord du vaisseau.`;
+          }
+        }
+
+        if (eligibleRoles.length === 0 && !autoInfo) {
           content = <PhaseText title="Le hacker se réveille..." sub="Aucune information à voler cette nuit." />;
         } else {
           let hackResult = null;
-          if (hackedRole) {
-            const hackedActor = phases.find((ph) => ph.role === hackedRole)?.actors[0];
-            if (hackedActor && isIncapacitated(hackedActor.id)) {
-              hackResult = `Cette personne était ${incapacityLabel(hackedActor.id)}, elle n'a pas d'information à voler.`;
-            } else if (hackedRole === "Informaticien") {
-              const count = workingPlayers.filter((p) => p.alive && p.status === "mutant").length;
-              hackResult = `Il y a ${count} mutant${count > 1 ? "s" : ""} à bord du vaisseau.`;
-            } else if (hackedRole === "Psychologue") {
-              const target = psychoTargetId !== null ? getPlayer(psychoTargetId) : null;
-              hackResult = target ? `${target.name} est ${target.status === "mutant" ? "MUTANTE" : "SAINE"}.` : "Le psychologue n'a analysé personne cette nuit.";
-            } else if (hackedRole === "Espion") {
-              const target = espionTargetId !== null ? getPlayer(espionTargetId) : null;
-              hackResult = target
-                ? `Mutée : ${mutateId === target.id ? "Oui" : "Non"} / Paralysée : ${paralyzeId === target.id ? "Oui" : "Non"} / Soignée : ${healedIds.has(target.id) ? "Oui" : "Non"}`
-                : "L'espion n'a observé personne cette nuit.";
-            }
+          if (hackedRole === "Informaticien") {
+            const count = workingPlayers.filter((p) => p.alive && p.status === "mutant").length;
+            hackResult = `Il y a ${count} mutant${count > 1 ? "s" : ""} à bord du vaisseau.`;
+          } else if (hackedRole === "Psychologue") {
+            const target = psychoTargetId !== null ? getPlayer(psychoTargetId) : null;
+            hackResult = target ? `${target.name} est ${target.status === "mutant" ? "MUTANTE" : "SAINE"}.` : "Le psychologue n'a analysé personne cette nuit.";
+          } else if (hackedRole === "Espion") {
+            const target = espionTargetId !== null ? getPlayer(espionTargetId) : null;
+            hackResult = target
+              ? `Mutée : ${mutateId === target.id ? "Oui" : "Non"} / Paralysée : ${paralyzeId === target.id ? "Oui" : "Non"} / Soignée : ${healedIds.has(target.id) ? "Oui" : "Non"}`
+              : "L'espion n'a observé personne cette nuit.";
           }
           content = (
             <>
               <PhaseText title="Le hacker se réveille..." sub="Il choisit une information à voler (ou aucune)." />
-              <SelectorBlock icon={Terminal} color="#8dff6b" label="Information volée">
-                <Chip label="Ne rien voler" color="#8dff6b" selected={hackedRole === null} onClick={() => setHackedRole(null)} />
-                {eligibleRoles.map((r) => <Chip key={r} label={r} color="#8dff6b" selected={hackedRole === r} onClick={() => setHackedRole(r)} />)}
-              </SelectorBlock>
+              {autoInfo && (
+                <ResultBox color="#8dff6b">{`Accès automatique (rôle paralysé) :\n${autoInfo}`}</ResultBox>
+              )}
+              {eligibleRoles.length > 0 && (
+                <SelectorBlock icon={Terminal} color="#8dff6b" label="Information volée">
+                  <Chip label="Ne rien voler" color="#8dff6b" selected={hackedRole === null} onClick={() => setHackedRole(null)} />
+                  {eligibleRoles.map((r) => <Chip key={r} label={r} color="#8dff6b" selected={hackedRole === r} onClick={() => setHackedRole(r)} />)}
+                </SelectorBlock>
+              )}
               {hackResult && <ResultBox color="#8dff6b">{hackResult}</ResultBox>}
             </>
           );
@@ -551,14 +684,14 @@ function NightGame({ round, players, onComplete, setScreen }) {
   }
 
   const handleSuivant = () => {
-    if (currentKey === "Mutant souche") confirmMutantPhase();
+    if (currentKey === "Mutants") confirmMutantPhase();
     else if (currentKey === "Médecin") confirmMedecinPhase();
     else goNext();
   };
 
   return (
     <Backdrop>
-      <PlayersToggle players={workingPlayers} />
+      <PlayersToggle players={workingPlayers} captainId={captainId} />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", gap: 18, paddingTop: 40 }}>
         <p style={{ color: "#5a6f66", fontSize: 12, letterSpacing: 2, textAlign: "center" }}>
           NUIT {round} — ÉTAPE {stepIndex + 1} / {steps.length}
@@ -604,17 +737,61 @@ function ResultBox({ color, children }) {
 }
 
 /* ---------------------------------------------------------
-   ECRAN : VOTE DU JOUR (vote interactif joueur par joueur)
+   ECRAN : DISCUSSION (chrono paramétrable)
 --------------------------------------------------------- */
 
-function DayVote({ round, players, onConfirm, setScreen }) {
-  const alivePlayers = players.filter((p) => p.alive);
+function Discussion({ round, minutes, onDone, setScreen }) {
+  const [secondsLeft, setSecondsLeft] = useState(minutes * 60);
+  const [running, setRunning] = useState(true);
 
-  // votes[voterId] = targetId (nombre) ou null pour un vote blanc
+  useEffect(() => {
+    if (!running) return;
+    const id = setInterval(() => {
+      setSecondsLeft((s) => Math.max(0, s - 1));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [running]);
+
+  useEffect(() => {
+    if (secondsLeft === 0) setRunning(false);
+  }, [secondsLeft]);
+
+  const finished = secondsLeft <= 0;
+
+  return (
+    <Backdrop>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 22 }}>
+        <p style={{ color: "#7f9a8c", letterSpacing: 2, fontSize: 13 }}>DISCUSSION — JOUR {round}</p>
+        <Clock size={36} color={finished ? "#ff4d5e" : "#5ea9ff"} />
+        <div style={{ fontSize: 64, fontWeight: 900, color: finished ? "#ff4d5e" : "#5ea9ff", textShadow: finished ? "0 0 30px rgba(255,77,94,0.4)" : "0 0 30px rgba(94,169,255,0.4)", fontVariantNumeric: "tabular-nums" }}>
+          {formatTime(secondsLeft)}
+        </div>
+        <p style={{ color: "#c9d3d8", fontSize: 14, textAlign: "center", maxWidth: 280 }}>
+          {finished ? "Le temps de discussion est écoulé." : "Débattez : qui pourrait être un mutant ?"}
+        </p>
+        {!finished && (
+          <button onClick={() => setRunning((r) => !r)} style={roundBtnStyle}>
+            {running ? <Pause size={22} /> : <Play size={22} />}
+          </button>
+        )}
+        <PrimaryButton onClick={onDone}>PASSER AU VOTE</PrimaryButton>
+      </div>
+      <BackButton onClick={() => setScreen("menu")} />
+    </Backdrop>
+  );
+}
+
+/* ---------------------------------------------------------
+   ECRAN : ÉLECTION DU CAPITAINE (premier vote uniquement)
+--------------------------------------------------------- */
+
+function CaptainVote({ players, onDone, setScreen }) {
+  const alivePlayers = players.filter((p) => p.alive);
   const [votes, setVotes] = useState({});
   const [activeVoterId, setActiveVoterId] = useState(null);
   const [selectedTarget, setSelectedTarget] = useState(null);
   const [showResults, setShowResults] = useState(false);
+  const [drawnCaptainId, setDrawnCaptainId] = useState(null);
 
   const votedIds = new Set(Object.keys(votes).map((k) => Number(k)));
   const allVoted = alivePlayers.every((p) => votedIds.has(p.id));
@@ -628,28 +805,173 @@ function DayVote({ round, players, onConfirm, setScreen }) {
 
   const tally = useMemo(() => {
     const t = {};
-    Object.values(votes).forEach((v) => {
-      const key = v === null ? "BLANC" : v;
-      t[key] = (t[key] || 0) + 1;
-    });
+    Object.values(votes).forEach((v) => { t[v] = (t[v] || 0) + 1; });
     return t;
   }, [votes]);
+
+  const leaders = useMemo(() => {
+    let max = 0;
+    let l = [];
+    Object.entries(tally).forEach(([id, count]) => {
+      if (count > max) { max = count; l = [Number(id)]; }
+      else if (count === max) l.push(Number(id));
+    });
+    return l;
+  }, [tally]);
+
+  const winnerId = leaders.length === 1 ? leaders[0] : drawnCaptainId;
+
+  const drawRandom = () => {
+    const pick = leaders[Math.floor(Math.random() * leaders.length)];
+    setDrawnCaptainId(pick);
+  };
+
+  if (activeVoter) {
+    const candidates = alivePlayers.filter((p) => p.id !== activeVoter.id);
+    return (
+      <Backdrop>
+        <PlayersToggle players={players} disabled />
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", gap: 18, paddingTop: 40 }}>
+          <p style={{ textAlign: "center", fontSize: 12, color: "#7f9a8c", letterSpacing: 2 }}>ÉLECTION DU CAPITAINE</p>
+          <PhaseText title={`${activeVoter.name}, votez pour le capitaine.`} sub="Le capitaine départagera les votes en cas d'égalité future." />
+          <SelectorBlock icon={Crown} color="#ffb454" label="Votre vote">
+            {candidates.map((p) => (
+              <Chip key={p.id} label={p.name} color="#ffb454" selected={selectedTarget === p.id} onClick={() => setSelectedTarget(p.id)} />
+            ))}
+          </SelectorBlock>
+          <div style={{ display: "flex", justifyContent: "center", marginTop: 10 }}>
+            <PrimaryButton icon={Check} disabled={selectedTarget === null} onClick={confirmVote}>VALIDER MON VOTE</PrimaryButton>
+          </div>
+          <p style={{ fontSize: 11, color: "#7f9a8c", textAlign: "center" }}>Rendez le téléphone au meneur une fois votre vote validé.</p>
+        </div>
+        <BackButton onClick={() => setScreen("menu")} />
+      </Backdrop>
+    );
+  }
+
+  if (allVoted && showResults) {
+    const captain = winnerId !== null ? players.find((p) => p.id === winnerId) : null;
+    return (
+      <Backdrop>
+        <PlayersToggle players={players} disabled />
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", gap: 20, paddingTop: 40 }}>
+          <p style={{ textAlign: "center", fontSize: 12, color: "#7f9a8c", letterSpacing: 2 }}>RÉSULTATS — ÉLECTION DU CAPITAINE</p>
+          {leaders.length > 1 && !drawnCaptainId ? (
+            <>
+              <ResultBox color="#ffb454">{"Égalité entre plusieurs joueurs.\nUn tirage au sort va départager."}</ResultBox>
+              <div style={{ display: "flex", justifyContent: "center" }}>
+                <PrimaryButton icon={Shuffle} onClick={drawRandom}>TIRAGE AU SORT</PrimaryButton>
+              </div>
+            </>
+          ) : (
+            <ResultBox color="#ffb454">
+              <Crown size={18} style={{ verticalAlign: "middle", marginRight: 6 }} />
+              {captain?.name} est élu(e) capitaine.
+            </ResultBox>
+          )}
+          <div style={{ display: "flex", justifyContent: "center", marginTop: 10 }}>
+            <PrimaryButton icon={Check} disabled={winnerId === null} onClick={() => onDone(winnerId)}>CONTINUER</PrimaryButton>
+          </div>
+        </div>
+        <BackButton onClick={() => setScreen("menu")} />
+      </Backdrop>
+    );
+  }
+
+  return (
+    <Backdrop>
+      <PlayersToggle players={players} disabled />
+      <h2 style={{ textAlign: "center", color: "#ffb454", letterSpacing: 1, fontSize: 20, marginBottom: 4, marginTop: 30 }}>ÉLECTION DU CAPITAINE</h2>
+      <p style={{ textAlign: "center", fontSize: 12, color: "#7f9a8c", marginTop: 0, marginBottom: 20 }}>
+        {allVoted ? "Tout le monde a voté." : "Donnez le téléphone à chaque joueur : il clique sur son prénom pour voter."}
+      </p>
+      <div style={{ flex: 1, overflowY: "auto" }}>
+        <SelectorBlock icon={Users} color="#ffb454" label={`Joueurs (${votedIds.size}/${alivePlayers.length} ont voté)`}>
+          {alivePlayers.map((p) => {
+            const hasVoted = votedIds.has(p.id);
+            return (
+              <Chip
+                key={p.id}
+                label={p.name}
+                sub={hasVoted ? "A voté ✓" : "En attente"}
+                color="#ffb454"
+                selected={false}
+                disabled={hasVoted}
+                onClick={() => setActiveVoterId(p.id)}
+              />
+            );
+          })}
+        </SelectorBlock>
+      </div>
+      <div style={{ display: "flex", justifyContent: "center", marginTop: 20 }}>
+        <PrimaryButton icon={Check} disabled={!allVoted} onClick={() => setShowResults(true)}>
+          VOIR LES RÉSULTATS
+        </PrimaryButton>
+      </div>
+      <BackButton onClick={() => setScreen("menu")} />
+    </Backdrop>
+  );
+}
+
+/* ---------------------------------------------------------
+   ECRAN : VOTE DU JOUR (vote interactif joueur par joueur)
+--------------------------------------------------------- */
+
+function DayVote({ round, players, captainId, onConfirm, setScreen }) {
+  const alivePlayers = players.filter((p) => p.alive);
+
+  // votes[voterId] = targetId (nombre) ou null pour un vote blanc
+  const [votes, setVotes] = useState({});
+  const [activeVoterId, setActiveVoterId] = useState(null);
+  const [selectedTarget, setSelectedTarget] = useState(null);
+  const [showResults, setShowResults] = useState(false);
+  const [captainPick, setCaptainPick] = useState(null);
+
+  const votedIds = new Set(Object.keys(votes).map((k) => Number(k)));
+  const allVoted = alivePlayers.every((p) => votedIds.has(p.id));
+  const activeVoter = activeVoterId !== null ? alivePlayers.find((p) => p.id === activeVoterId) : null;
+  const captain = captainId !== null ? players.find((p) => p.id === captainId) : null;
+
+  const confirmVote = () => {
+    setVotes((prev) => ({ ...prev, [activeVoterId]: selectedTarget }));
+    setActiveVoterId(null);
+    setSelectedTarget(null);
+  };
+
+  // décompte des votes par joueur, + votes blancs à part
+  const tally = useMemo(() => {
+    const perPlayer = {};
+    alivePlayers.forEach((p) => { perPlayer[p.id] = 0; });
+    let blanc = 0;
+    Object.values(votes).forEach((v) => {
+      if (v === null) blanc += 1;
+      else perPlayer[v] = (perPlayer[v] || 0) + 1;
+    });
+    return { perPlayer, blanc };
+  }, [votes, alivePlayers]);
 
   const result = useMemo(() => {
     let max = 0;
     let leaders = [];
-    Object.entries(tally).forEach(([key, count]) => {
-      if (count > max) { max = count; leaders = [key]; }
-      else if (count === max) leaders.push(key);
+    Object.entries(tally.perPlayer).forEach(([id, count]) => {
+      if (count > max) { max = count; leaders = [Number(id)]; }
+      else if (count === max && count > 0) leaders.push(Number(id));
     });
-    if (leaders.length !== 1 || leaders[0] === "BLANC") {
-      return { eliminatedId: null };
+    if (tally.blanc > max) { max = tally.blanc; leaders = ["BLANC"]; }
+    else if (tally.blanc === max && max > 0) leaders.push("BLANC");
+
+    if (leaders.length === 0) return { eliminatedId: null, tie: false, tiedPlayerIds: [] };
+    if (leaders.length === 1) {
+      return leaders[0] === "BLANC" ? { eliminatedId: null, tie: false, tiedPlayerIds: [] } : { eliminatedId: leaders[0], tie: false, tiedPlayerIds: [] };
     }
-    return { eliminatedId: Number(leaders[0]) };
+    return { eliminatedId: null, tie: true, tiedPlayerIds: leaders.filter((l) => l !== "BLANC") };
   }, [tally]);
 
+  const needsCaptainDecision = result.tie && captain && captain.alive;
+  const finalEliminatedId = result.tie ? captainPick : result.eliminatedId;
+
   const handleFinalConfirm = () => {
-    const updated = players.map((p) => (p.id === result.eliminatedId ? { ...p, alive: false } : p));
+    const updated = players.map((p) => (p.id === finalEliminatedId ? { ...p, alive: false } : p));
     onConfirm(updated);
   };
 
@@ -658,7 +980,7 @@ function DayVote({ round, players, onConfirm, setScreen }) {
     const candidates = alivePlayers.filter((p) => p.id !== activeVoter.id);
     return (
       <Backdrop>
-        <PlayersToggle players={players} disabled />
+        <PlayersToggle players={players} disabled captainId={captainId} />
         <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", gap: 18, paddingTop: 40 }}>
           <p style={{ textAlign: "center", fontSize: 12, color: "#7f9a8c", letterSpacing: 2 }}>VOTE DU JOUR {round}</p>
           <PhaseText title={`${activeVoter.name}, à vous de voter.`} sub="Choisissez la personne que vous accusez, ou votez blanc." />
@@ -680,23 +1002,62 @@ function DayVote({ round, players, onConfirm, setScreen }) {
 
   /* --------- écran de résultats --------- */
   if (allVoted && showResults) {
-    const eliminatedPlayer = players.find((p) => p.id === result.eliminatedId);
+    const eliminatedPlayer = players.find((p) => p.id === finalEliminatedId);
+    const tieUnresolved = result.tie && finalEliminatedId === null;
     return (
       <Backdrop>
-        <PlayersToggle players={players} disabled />
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", gap: 20, paddingTop: 40 }}>
+        <PlayersToggle players={players} disabled captainId={captainId} />
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", gap: 18, paddingTop: 30, overflowY: "auto" }}>
           <p style={{ textAlign: "center", fontSize: 12, color: "#7f9a8c", letterSpacing: 2 }}>RÉSULTATS DU VOTE — JOUR {round}</p>
-          {result.eliminatedId === null ? (
-            <ResultBox color="#ffb454">{"Égalité ou majorité de votes blancs.\nPersonne n'est éliminé."}</ResultBox>
-          ) : (
+
+          <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 12, padding: 14 }}>
+            {alivePlayers.map((p) => {
+              const count = tally.perPlayer[p.id] || 0;
+              return (
+                <div key={p.id} style={{ display: "flex", justifyContent: "space-between", padding: "5px 2px", fontSize: 13 }}>
+                  <span>{p.name}</span>
+                  <span style={{ color: "#ffb454", fontWeight: 700 }}>{count} vote{count > 1 ? "s" : ""}</span>
+                </div>
+              );
+            })}
+            <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 2px", fontSize: 13, opacity: 0.7 }}>
+              <span>Vote blanc</span>
+              <span style={{ fontWeight: 700 }}>{tally.blanc} vote{tally.blanc > 1 ? "s" : ""}</span>
+            </div>
+          </div>
+
+          {tieUnresolved && needsCaptainDecision && (
+            <>
+              <ResultBox color="#ffb454">{"Égalité !\nLe capitaine doit départager."}</ResultBox>
+              <SelectorBlock icon={Crown} color="#ffb454" label={`${captain.name} (capitaine) désigne l'éliminé`}>
+                {result.tiedPlayerIds.map((id) => {
+                  const p = players.find((pl) => pl.id === id);
+                  return <Chip key={id} label={p.name} color="#ffb454" selected={captainPick === id} onClick={() => setCaptainPick(id)} />;
+                })}
+              </SelectorBlock>
+            </>
+          )}
+
+          {tieUnresolved && !needsCaptainDecision && (
+            <ResultBox color="#ffb454">{"Égalité, et aucun capitaine n'est en mesure de départager.\nPersonne n'est éliminé."}</ResultBox>
+          )}
+
+          {!result.tie && result.eliminatedId === null && (
+            <ResultBox color="#ffb454">{"Majorité de votes blancs.\nPersonne n'est éliminé."}</ResultBox>
+          )}
+
+          {finalEliminatedId !== null && (
             <ResultBox color="#ff4d5e">
               {eliminatedPlayer?.name} est désigné(e) par l'équipage.{"\n"}
               Rôle : {eliminatedPlayer?.role}{"\n"}
               Statut : {eliminatedPlayer?.status === "mutant" ? "MUTANT" : "SAIN"}
             </ResultBox>
           )}
+
           <div style={{ display: "flex", justifyContent: "center", marginTop: 10 }}>
-            <PrimaryButton icon={Check} onClick={handleFinalConfirm}>VALIDER ET PASSER À LA NUIT SUIVANTE</PrimaryButton>
+            <PrimaryButton icon={Check} disabled={tieUnresolved && needsCaptainDecision && captainPick === null} onClick={handleFinalConfirm}>
+              VALIDER ET PASSER À LA NUIT SUIVANTE
+            </PrimaryButton>
           </div>
         </div>
         <BackButton onClick={() => setScreen("menu")} />
@@ -707,7 +1068,7 @@ function DayVote({ round, players, onConfirm, setScreen }) {
   /* --------- grille de sélection : qui vote maintenant --------- */
   return (
     <Backdrop>
-      <PlayersToggle players={players} disabled />
+      <PlayersToggle players={players} disabled captainId={captainId} />
       <h2 style={{ textAlign: "center", color: "#ffb454", letterSpacing: 1, fontSize: 20, marginBottom: 4, marginTop: 30 }}>VOTE DU JOUR {round}</h2>
       <p style={{ textAlign: "center", fontSize: 12, color: "#7f9a8c", marginTop: 0, marginBottom: 20 }}>
         {allVoted ? "Tout le monde a voté." : "Donnez le téléphone à chaque joueur : il clique sur son prénom pour voter."}
@@ -744,7 +1105,7 @@ function DayVote({ round, players, onConfirm, setScreen }) {
    ECRAN : FIN DE PARTIE
 --------------------------------------------------------- */
 
-function EndScreen({ winner, players, onRestart, setScreen }) {
+function EndScreen({ winner, reason, players, captainId, onRestart, setScreen }) {
   const label = winner === "mutants" ? "LES MUTANTS ONT PRIS LE VAISSEAU" : winner === "sains" ? "LES ASTRONAUTES SAINS ONT SURVÉCU" : "PLUS AUCUN SURVIVANT";
   const color = winner === "mutants" ? "#ff4d5e" : winner === "sains" ? "#8dff6b" : "#7f9a8c";
   return (
@@ -752,6 +1113,11 @@ function EndScreen({ winner, players, onRestart, setScreen }) {
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10, marginTop: 40, marginBottom: 20 }}>
         <Trophy size={40} color={color} style={{ filter: `drop-shadow(0 0 14px ${color}88)` }} />
         <h2 style={{ textAlign: "center", color, fontSize: 20, letterSpacing: 1 }}>{label}</h2>
+        {reason === "medecins-incapacites" && (
+          <p style={{ textAlign: "center", color: "#c9d3d8", fontSize: 13, maxWidth: 300 }}>
+            Plus aucun médecin sain et disponible ne peut soigner : fin de partie automatique.
+          </p>
+        )}
       </div>
       <div style={{ flex: 1, overflowY: "auto", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 14, padding: 14 }}>
         {players.map((p) => {
@@ -761,7 +1127,9 @@ function EndScreen({ winner, players, onRestart, setScreen }) {
             <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 4px", borderBottom: "1px solid rgba(255,255,255,0.06)", opacity: p.alive ? 1 : 0.5 }}>
               <Icon size={18} color={info.color} />
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 14, fontWeight: 700, textDecoration: p.alive ? "none" : "line-through" }}>{p.name}</div>
+                <div style={{ fontSize: 14, fontWeight: 700, textDecoration: p.alive ? "none" : "line-through" }}>
+                  {p.name}{captainId === p.id && <CaptainBadge />}
+                </div>
                 <div style={{ fontSize: 11, color: info.color }}>{p.role}</div>
               </div>
               <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 999, color: p.status === "mutant" ? "#ff8f9a" : "#9fe8c8", border: `1px solid ${p.status === "mutant" ? "#ff4d5e" : "#4fd67a"}` }}>
@@ -823,27 +1191,38 @@ function Rules({ setScreen }) {
 export default function App() {
   const [screen, setScreen] = useState("menu");
   const [numPlayers, setNumPlayers] = useState(6);
+  const [includeTraitre, setIncludeTraitre] = useState(false);
+  const [includeEspion, setIncludeEspion] = useState(false);
+  const [discussionMinutes, setDiscussionMinutes] = useState(5);
   const [roles, setRoles] = useState([]);
   const [players, setPlayers] = useState([]);
   const [round, setRound] = useState(1);
   const [winner, setWinner] = useState(null);
+  const [endReason, setEndReason] = useState(null);
+  const [captainId, setCaptainId] = useState(null);
 
   const goToMenu = () => {
     setPlayers([]);
     setRoles([]);
     setRound(1);
     setWinner(null);
+    setEndReason(null);
+    setCaptainId(null);
     setScreen("menu");
   };
 
   const handleValidatePlayers = (n) => {
-    setRoles(generateRoles(n));
+    setRoles(generateRoles(n, { traitre: includeTraitre, espion: includeEspion }));
     setScreen("role");
   };
 
   const handleRoleFinish = (finishedPlayers) => {
     setPlayers(finishedPlayers);
     setRound(1);
+    setScreen("medecinReco");
+  };
+
+  const handleMedecinRecoContinue = () => {
     setScreen("game");
   };
 
@@ -851,7 +1230,23 @@ export default function App() {
     setPlayers(updatedPlayers);
     const w = checkWinner(updatedPlayers);
     if (w) { setWinner(w); setScreen("end"); }
-    else setScreen("dayVote");
+    else setScreen("discussion");
+  };
+
+  const handleAutoEnd = (updatedPlayers) => {
+    setPlayers(updatedPlayers);
+    setWinner("mutants");
+    setEndReason("medecins-incapacites");
+    setScreen("end");
+  };
+
+  const handleDiscussionDone = () => {
+    setScreen(captainId === null ? "captainVote" : "dayVote");
+  };
+
+  const handleCaptainChosen = (id) => {
+    setCaptainId(id);
+    setScreen("dayVote");
   };
 
   const handleDayVoteConfirm = (updatedPlayers) => {
@@ -864,15 +1259,29 @@ export default function App() {
   if (screen === "menu") return <Menu setScreen={setScreen} />;
   if (screen === "rules") return <Rules setScreen={goToMenu} />;
   if (screen === "playerSelect")
-    return <PlayerSelect numPlayers={numPlayers} setNumPlayers={setNumPlayers} onValidate={handleValidatePlayers} setScreen={goToMenu} />;
+    return (
+      <PlayerSelect
+        numPlayers={numPlayers} setNumPlayers={setNumPlayers}
+        includeTraitre={includeTraitre} setIncludeTraitre={setIncludeTraitre}
+        includeEspion={includeEspion} setIncludeEspion={setIncludeEspion}
+        discussionMinutes={discussionMinutes} setDiscussionMinutes={setDiscussionMinutes}
+        onValidate={handleValidatePlayers} setScreen={goToMenu}
+      />
+    );
   if (screen === "role")
     return <RolePhase roles={roles} onFinish={handleRoleFinish} setScreen={goToMenu} />;
+  if (screen === "medecinReco")
+    return <MedecinReco players={players} onContinue={handleMedecinRecoContinue} setScreen={goToMenu} />;
   if (screen === "game")
-    return <NightGame key={round} round={round} players={players} onComplete={handleNightComplete} setScreen={goToMenu} />;
+    return <NightGame key={round} round={round} players={players} captainId={captainId} onComplete={handleNightComplete} onAutoEnd={handleAutoEnd} setScreen={goToMenu} />;
+  if (screen === "discussion")
+    return <Discussion key={round} round={round} minutes={discussionMinutes} onDone={handleDiscussionDone} setScreen={goToMenu} />;
+  if (screen === "captainVote")
+    return <CaptainVote players={players} onDone={handleCaptainChosen} setScreen={goToMenu} />;
   if (screen === "dayVote")
-    return <DayVote key={round} round={round} players={players} onConfirm={handleDayVoteConfirm} setScreen={goToMenu} />;
+    return <DayVote key={round} round={round} players={players} captainId={captainId} onConfirm={handleDayVoteConfirm} setScreen={goToMenu} />;
   if (screen === "end")
-    return <EndScreen winner={winner} players={players} onRestart={goToMenu} setScreen={goToMenu} />;
+    return <EndScreen winner={winner} reason={endReason} players={players} captainId={captainId} onRestart={goToMenu} setScreen={goToMenu} />;
 
   return null;
 }
