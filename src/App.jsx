@@ -47,6 +47,8 @@ function generateRoles(n, opts = {}) {
   let used = 0;
   if (opts.traitre && used < extra) { roles.push("Traître"); used++; }
   if (opts.espion && used < extra) { roles.push("Espion"); used++; }
+  const astronautCount = Math.max(0, Math.min(opts.astronautes || 0, extra - used));
+  for (let i = 0; i < astronautCount; i++) { roles.push("Astronaute"); used++; }
   while (roles.length < n) roles.push("Astronaute");
   return roles.sort(() => Math.random() - 0.5);
 }
@@ -223,12 +225,15 @@ function PlayerSelect({
   numPlayers, setNumPlayers,
   includeTraitre, setIncludeTraitre,
   includeEspion, setIncludeEspion,
+  astronautCount, setAstronautCount,
   discussionMinutes, setDiscussionMinutes,
   onValidate, setScreen,
 }) {
   const [error, setError] = useState("");
   const extraSlots = Math.max(0, numPlayers - 6);
   const specialCount = (includeTraitre ? 1 : 0) + (includeEspion ? 1 : 0);
+  const remainingForAstronautes = Math.max(0, extraSlots - specialCount);
+  const astronautDisplay = Math.min(astronautCount, remainingForAstronautes);
 
   return (
     <Backdrop>
@@ -257,6 +262,16 @@ function PlayerSelect({
                 onClick={() => setIncludeEspion((v) => !v)}
               />
             </div>
+            {remainingForAstronautes > 0 && (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 12, gap: 12 }}>
+                <span style={{ fontSize: 13, color: "#d5dadd" }}>Astronaute(s) additionnel(s)</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <button onClick={() => setAstronautCount((c) => Math.max(0, Math.min(c, remainingForAstronautes) - 1))} style={{ ...roundBtnStyle, width: 32, height: 32 }}><Minus size={14} /></button>
+                  <div style={{ fontSize: 16, fontWeight: 900, color: "#e8e8e8", minWidth: 18, textAlign: "center" }}>{astronautDisplay}</div>
+                  <button onClick={() => setAstronautCount((c) => Math.min(remainingForAstronautes, c + 1))} disabled={astronautDisplay >= remainingForAstronautes} style={{ ...roundBtnStyle, width: 32, height: 32 }}><Plus size={14} /></button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -960,15 +975,21 @@ function DayVote({ round, players, captainId, onConfirm, setScreen }) {
     if (tally.blanc > max) { max = tally.blanc; leaders = ["BLANC"]; }
     else if (tally.blanc === max && max > 0) leaders.push("BLANC");
 
-    if (leaders.length === 0) return { eliminatedId: null, tie: false, tiedPlayerIds: [] };
+    if (leaders.length === 0) return { eliminatedId: null, tie: false, tiedOptions: [] };
     if (leaders.length === 1) {
-      return leaders[0] === "BLANC" ? { eliminatedId: null, tie: false, tiedPlayerIds: [] } : { eliminatedId: leaders[0], tie: false, tiedPlayerIds: [] };
+      return leaders[0] === "BLANC" ? { eliminatedId: null, tie: false, tiedOptions: [] } : { eliminatedId: leaders[0], tie: false, tiedOptions: [] };
     }
-    return { eliminatedId: null, tie: true, tiedPlayerIds: leaders.filter((l) => l !== "BLANC") };
+    // en cas d'égalité, le capitaine choisit parmi les options à égalité — y compris "vote blanc" si elle en fait partie
+    return { eliminatedId: null, tie: true, tiedOptions: leaders };
   }, [tally]);
 
   const needsCaptainDecision = result.tie && captain && captain.alive;
-  const finalEliminatedId = result.tie ? captainPick : result.eliminatedId;
+  const captainMustChoose = needsCaptainDecision && captainPick === null;
+  const captainChoseBlanc = needsCaptainDecision && captainPick === "BLANC";
+  const tieNoCaptain = result.tie && !needsCaptainDecision;
+  const finalEliminatedId = result.tie
+    ? (captainPick !== null && captainPick !== "BLANC" ? captainPick : null)
+    : result.eliminatedId;
 
   const handleFinalConfirm = () => {
     const updated = players.map((p) => (p.id === finalEliminatedId ? { ...p, alive: false } : p));
@@ -1003,7 +1024,6 @@ function DayVote({ round, players, captainId, onConfirm, setScreen }) {
   /* --------- écran de résultats --------- */
   if (allVoted && showResults) {
     const eliminatedPlayer = players.find((p) => p.id === finalEliminatedId);
-    const tieUnresolved = result.tie && finalEliminatedId === null;
     return (
       <Backdrop>
         <PlayersToggle players={players} disabled captainId={captainId} />
@@ -1026,11 +1046,14 @@ function DayVote({ round, players, captainId, onConfirm, setScreen }) {
             </div>
           </div>
 
-          {tieUnresolved && needsCaptainDecision && (
+          {captainMustChoose && (
             <>
-              <ResultBox color="#ffb454">{"Égalité !\nLe capitaine doit départager."}</ResultBox>
-              <SelectorBlock icon={Crown} color="#ffb454" label={`${captain.name} (capitaine) désigne l'éliminé`}>
-                {result.tiedPlayerIds.map((id) => {
+              <ResultBox color="#ffb454">{"Égalité !\nLe capitaine départage (il peut aussi choisir le vote blanc pour n'éliminer personne)."}</ResultBox>
+              <SelectorBlock icon={Crown} color="#ffb454" label={`${captain.name} (capitaine) tranche`}>
+                {result.tiedOptions.includes("BLANC") && (
+                  <Chip label="Vote blanc" color="#ffb454" selected={captainPick === "BLANC"} onClick={() => setCaptainPick("BLANC")} />
+                )}
+                {result.tiedOptions.filter((o) => o !== "BLANC").map((id) => {
                   const p = players.find((pl) => pl.id === id);
                   return <Chip key={id} label={p.name} color="#ffb454" selected={captainPick === id} onClick={() => setCaptainPick(id)} />;
                 })}
@@ -1038,7 +1061,11 @@ function DayVote({ round, players, captainId, onConfirm, setScreen }) {
             </>
           )}
 
-          {tieUnresolved && !needsCaptainDecision && (
+          {captainChoseBlanc && (
+            <ResultBox color="#ffb454">{"Le capitaine a tranché : personne n'est éliminé."}</ResultBox>
+          )}
+
+          {tieNoCaptain && (
             <ResultBox color="#ffb454">{"Égalité, et aucun capitaine n'est en mesure de départager.\nPersonne n'est éliminé."}</ResultBox>
           )}
 
@@ -1055,7 +1082,7 @@ function DayVote({ round, players, captainId, onConfirm, setScreen }) {
           )}
 
           <div style={{ display: "flex", justifyContent: "center", marginTop: 10 }}>
-            <PrimaryButton icon={Check} disabled={tieUnresolved && needsCaptainDecision && captainPick === null} onClick={handleFinalConfirm}>
+            <PrimaryButton icon={Check} disabled={captainMustChoose} onClick={handleFinalConfirm}>
               VALIDER ET PASSER À LA NUIT SUIVANTE
             </PrimaryButton>
           </div>
@@ -1193,6 +1220,7 @@ export default function App() {
   const [numPlayers, setNumPlayers] = useState(6);
   const [includeTraitre, setIncludeTraitre] = useState(false);
   const [includeEspion, setIncludeEspion] = useState(false);
+  const [astronautCount, setAstronautCount] = useState(0);
   const [discussionMinutes, setDiscussionMinutes] = useState(5);
   const [roles, setRoles] = useState([]);
   const [players, setPlayers] = useState([]);
@@ -1212,7 +1240,7 @@ export default function App() {
   };
 
   const handleValidatePlayers = (n) => {
-    setRoles(generateRoles(n, { traitre: includeTraitre, espion: includeEspion }));
+    setRoles(generateRoles(n, { traitre: includeTraitre, espion: includeEspion, astronautes: astronautCount }));
     setScreen("role");
   };
 
@@ -1230,7 +1258,7 @@ export default function App() {
     setPlayers(updatedPlayers);
     const w = checkWinner(updatedPlayers);
     if (w) { setWinner(w); setScreen("end"); }
-    else setScreen("discussion");
+    else setScreen(captainId === null ? "captainVote" : "discussion");
   };
 
   const handleAutoEnd = (updatedPlayers) => {
@@ -1241,12 +1269,12 @@ export default function App() {
   };
 
   const handleDiscussionDone = () => {
-    setScreen(captainId === null ? "captainVote" : "dayVote");
+    setScreen("dayVote");
   };
 
   const handleCaptainChosen = (id) => {
     setCaptainId(id);
-    setScreen("dayVote");
+    setScreen("discussion");
   };
 
   const handleDayVoteConfirm = (updatedPlayers) => {
@@ -1264,6 +1292,7 @@ export default function App() {
         numPlayers={numPlayers} setNumPlayers={setNumPlayers}
         includeTraitre={includeTraitre} setIncludeTraitre={setIncludeTraitre}
         includeEspion={includeEspion} setIncludeEspion={setIncludeEspion}
+        astronautCount={astronautCount} setAstronautCount={setAstronautCount}
         discussionMinutes={discussionMinutes} setDiscussionMinutes={setDiscussionMinutes}
         onValidate={handleValidatePlayers} setScreen={goToMenu}
       />
